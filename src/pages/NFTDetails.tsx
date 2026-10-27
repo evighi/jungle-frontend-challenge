@@ -10,7 +10,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { addCartItem } from "../api/cart";
 
+import { useNftRealtimeUpdates } from "../realtime/useNftRealtimeUpdates";
+
 export function NFTDetails() {
+    useNftRealtimeUpdates();
     const { nftId } = useParams({
         from: "/nft/$nftId",
     });

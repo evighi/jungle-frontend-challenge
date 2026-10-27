@@ -1,13 +1,30 @@
 import { test, expect } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
-    await page.goto("/");
+    await page.addInitScript(() => {
+        const initialized = sessionStorage.getItem(
+            "kurio:e2e-initialized"
+        );
 
-    await page.evaluate(() => {
+        if (initialized) return;
+
         localStorage.removeItem("kurio:guest-cart:v1");
+
+        sessionStorage.setItem(
+            "kurio:e2e-initialized",
+            "true"
+        );
     });
 
-    await page.reload();
+    await page.goto("/", {
+        waitUntil: "domcontentloaded",
+    });
+
+    await expect(
+        page.getByRole("heading", {
+            name: "Todos os NFTs",
+        })
+    ).toBeVisible();
 });
 
 test("deve carregar o catálogo de NFTs", async ({ page }) => {

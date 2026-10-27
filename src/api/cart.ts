@@ -48,3 +48,9 @@ export async function removeCartItem(
 
   return data;
 }
+
+export async function mergeGuestCart(): Promise<CartResponse> {
+  const { data } = await api.post<CartResponse>("/cart/merge");
+
+  return data;
+}

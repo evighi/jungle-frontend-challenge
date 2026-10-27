@@ -4,12 +4,15 @@ import {
     createRouter,
     Outlet,
 } from "@tanstack/react-router";
-
 import { Header } from "./components/layout/Header";
 import { Home } from "./pages/Home";
 import { NFTDetails } from "./pages/NFTDetails";
-
 import { Cart } from "./pages/Cart";
+import { Login } from "./pages/Login";
+import { Register } from "./pages/Register";
+import { Checkout } from "./pages/Checkout";
+import { Wallets } from "./pages/Wallets";
+import { OrderDetails } from "./pages/OrderDetails";
 
 const rootRoute = createRootRoute({
     component: () => (
@@ -80,10 +83,52 @@ const cartRoute = createRoute({
     component: Cart,
 });
 
+const checkoutRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/checkout",
+    component: Checkout,
+
+    validateSearch: (search: Record<string, unknown>) => ({
+        quoteId:
+            typeof search.quoteId === "string"
+                ? search.quoteId
+                : "",
+    }),
+});
+
+const walletsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/carteiras",
+    component: Wallets,
+});
+
+const loginRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/login",
+    component: Login,
+});
+
+const registerRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/cadastro",
+    component: Register,
+});
+
+const orderDetailsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/pedido/$orderId",
+    component: OrderDetails,
+});
+
 const routeTree = rootRoute.addChildren([
-  homeRoute,
-  nftRoute,
-  cartRoute,
+    homeRoute,
+    nftRoute,
+    cartRoute,
+    checkoutRoute,
+    loginRoute,
+    registerRoute,
+    walletsRoute,
+    orderDetailsRoute,
 ]);
 
 export const router = createRouter({

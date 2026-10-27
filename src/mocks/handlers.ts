@@ -1,6 +1,11 @@
 import { http, HttpResponse } from "msw";
 import { nftDatabase } from "./data/nfts";
 import { cartHandlers } from "./cart";
+import { authHandlers } from "./auth";
+import { quoteHandlers } from "./quote";
+import { orderHandlers } from "./orders";
+import { walletHandlers } from "./wallets";
+import { getNftWithStock } from "./stock";
 
 export const handlers = [
     http.get("/api/nfts", ({ request }) => {
@@ -48,7 +53,9 @@ export const handlers = [
         const totalPages = Math.ceil(total / limit);
 
         const start = (page - 1) * limit;
-        const items = results.slice(start, start + limit);
+        const items = results
+            .slice(start, start + limit)
+            .map(getNftWithStock);
 
         return HttpResponse.json({
             items,
@@ -70,8 +77,14 @@ export const handlers = [
             );
         }
 
-        return HttpResponse.json(nft);
+        return HttpResponse.json(
+            getNftWithStock(nft)
+        );
     }),
 
     ...cartHandlers,
+    ...authHandlers,
+    ...quoteHandlers,
+    ...orderHandlers,
+    ...walletHandlers,
 ];

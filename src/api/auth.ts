@@ -23,6 +23,10 @@ export function getAuthToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
 
+export function clearAuthToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
 export async function login(
   email: string,
   password: string
