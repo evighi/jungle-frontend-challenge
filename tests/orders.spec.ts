@@ -1085,3 +1085,85 @@ test(
         }
     }
 );
+
+test(
+    "regressão visual da confirmação do pagamento",
+    async ({ page }) => {
+        await prepareCart(page);
+
+        const quote = await createQuote(page);
+
+        expect(quote.status).toBe(200);
+
+        const created = await createOrder(
+            page,
+            quote.data.quoteId,
+            crypto.randomUUID()
+        );
+
+        expect(created.status).toBe(201);
+        expect(created.data.status).toBe("PENDING");
+
+        const orderId = created.data.id as string;
+
+        await page.goto(
+            `/pedido/${encodeURIComponent(orderId)}`
+        );
+
+        await expect(
+            page.getByRole("heading", {
+                name: "Acompanhar pedido",
+            })
+        ).toBeVisible();
+
+        await expect(
+            page.getByRole("heading", {
+                name: "Pagamento confirmado",
+            })
+        ).toBeVisible({
+            timeout: 15000,
+        });
+
+        await expect(
+            page.getByRole("heading", {
+                name: "Itens do pedido",
+            })
+        ).toBeVisible();
+
+        await expect(
+            page.getByRole("heading", {
+                name: "Resumo financeiro",
+            })
+        ).toBeVisible();
+
+        await expect(
+            page.locator('[data-slot="skeleton"]')
+        ).toHaveCount(0);
+
+        await page.evaluate(async () => {
+            await document.fonts.ready;
+        });
+
+        await expect(page).toHaveScreenshot(
+            "order-confirmed.png",
+            {
+                fullPage: true,
+                animations: "disabled",
+                caret: "hide",
+                maxDiffPixelRatio: 0.01,
+                mask: [
+                    page.getByText(orderId, {
+                        exact: true,
+                    }),
+                    page.getByText(/^Criado em /),
+                    page
+                        .getByRole("status")
+                        .filter({
+                            hasText: /Tempo real/,
+                        }),
+                ],
+                maskColor: "#261711",
+            }
+        );
+    }
+);

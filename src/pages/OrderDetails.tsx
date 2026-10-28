@@ -364,7 +364,7 @@ export function OrderDetails() {
                             <div className="space-y-4">
                                 {order.items.map((item) => (
                                     <div
-                                        key={item.nftId}
+                                        key={`${item.nftId}:${item.editionId ?? "default"}`}
                                         className="flex justify-between gap-4 border-b border-[#4a3328] pb-4 last:border-b-0"
                                     >
                                         <div>
