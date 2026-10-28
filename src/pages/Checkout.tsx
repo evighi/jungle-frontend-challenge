@@ -223,7 +223,7 @@ export function Checkout() {
                                 <div className="space-y-5">
                                     {quote.items.map((item) => (
                                         <div
-                                            key={item.nftId}
+                                            key={`${item.nftId}:${item.editionId ?? "default"}`}
                                             className="flex items-center justify-between gap-4 border-b border-[#4a3328] pb-5 last:border-b-0 last:pb-0"
                                         >
                                             <div>
