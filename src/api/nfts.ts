@@ -1,14 +1,30 @@
 import axios from "axios";
 
+export type NFTEditionType =
+    | "1/1"
+    | "1/10"
+    | "1/50"
+    | "OPEN";
+
+export interface NFTEdition {
+    id: string;
+    type: NFTEditionType;
+    available: number;
+    priceEth: string;
+}
+
 export interface NFT {
     id: string;
     name: string;
     collection: string;
     creator: string;
     image: string;
+    images?: string[];
     priceEth: string;
     available: number;
     category: string;
+
+    editions?: NFTEdition[];
 }
 
 export interface NFTListResponse {
@@ -31,13 +47,13 @@ export const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("kurio:auth-token");
+    const token = localStorage.getItem("kurio:auth-token");
 
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
 
-  return config;
+    return config;
 });
 
 export async function getNFTs(

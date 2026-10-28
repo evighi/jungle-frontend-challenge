@@ -1,18 +1,28 @@
 import { nftDatabase } from "./data/nfts";
-
 import type { NFT } from "../api/nfts";
 
 const STOCK_KEY = "kurio:nft-stock:v1";
 
-type StockState = Record<string, number>;
+interface StockState {
+    [key: string]: unknown;
+}
+
+export interface StockItem {
+    nftId: string;
+    quantity: number;
+    editionId?: string;
+}
+
+export type StockCommitResult =
+    | "APPLIED"
+    | "ALREADY_APPLIED"
+    | "INSUFFICIENT";
 
 function readStoredStock(): StockState {
     try {
         const raw = localStorage.getItem(STOCK_KEY);
 
-        if (!raw) {
-            return {};
-        }
+        if (!raw) return {};
 
         const parsed: unknown = JSON.parse(raw);
 
@@ -37,88 +47,208 @@ function saveStock(stock: StockState): void {
     );
 }
 
-export function getAvailableStock(
-    nftId: string
+function getStockKey(
+    nftId: string,
+    editionId?: string
+): string {
+    if (!editionId) {
+        return nftId;
+    }
+
+    const nft = nftDatabase.find(
+        (item) => item.id === nftId
+    );
+
+    // A edição que representa o produto original
+    // compartilha seu estoque com o carrinho legado.
+    const legacyEdition = nft?.editions?.find(
+        (edition) =>
+            edition.priceEth === nft.priceEth &&
+            edition.available === nft.available
+    );
+
+    if (editionId === legacyEdition?.id) {
+        return nftId;
+    }
+
+    return `edition:${nftId}:${editionId}`;
+}
+
+function getInitialStock(
+    nftId: string,
+    editionId?: string
 ): number {
     const nft = nftDatabase.find(
         (item) => item.id === nftId
     );
 
-    if (!nft) {
-        return 0;
+    if (!nft) return 0;
+
+    if (!editionId) {
+        return nft.available;
     }
 
-    const storedStock = readStoredStock();
+    const edition = nft.editions?.find(
+        (item) => item.id === editionId
+    );
 
-    const quantity = storedStock[nftId];
+    return edition?.available ?? 0;
+}
 
+function isValidStockItem(item: StockItem): boolean {
     if (
-        typeof quantity === "number" &&
-        Number.isInteger(quantity) &&
-        quantity >= 0 &&
-        quantity <= nft.available
+        typeof item.nftId !== "string" ||
+        !Number.isInteger(item.quantity) ||
+        item.quantity <= 0
     ) {
-        return quantity;
-    }
-
-    return nft.available;
-}
-
-export function getNftWithStock(
-    nft: NFT
-): NFT {
-    return {
-        ...nft,
-        available: getAvailableStock(nft.id),
-    };
-}
-
-export function decreaseStock(
-    items: Array<{
-        nftId: string;
-        quantity: number;
-    }>
-): boolean {
-    const requested = new Map<string, number>();
-
-    for (const item of items) {
-        if (
-            !Number.isInteger(item.quantity) ||
-            item.quantity <= 0
-        ) {
-            return false;
-        }
-
-        requested.set(
-            item.nftId,
-            (requested.get(item.nftId) ?? 0) +
-            item.quantity
-        );
-    }
-
-    if (requested.size === 0) {
         return false;
     }
 
-    // Verifica TODOS os produtos antes de alterar qualquer um.
-    for (const [nftId, quantity] of requested) {
-        const nft = nftDatabase.find(
-            (candidate) => candidate.id === nftId
-        );
+    const nft = nftDatabase.find(
+        (candidate) => candidate.id === item.nftId
+    );
 
+    if (!nft) return false;
+
+    if (item.editionId !== undefined) {
         if (
-            !nft ||
-            quantity > getAvailableStock(nftId)
+            typeof item.editionId !== "string" ||
+            !nft.editions?.some(
+                (edition) => edition.id === item.editionId
+            )
         ) {
             return false;
         }
+    }
+
+    return true;
+}
+
+export function getAvailableStock(
+    nftId: string,
+    editionId?: string
+): number {
+    const initialStock = getInitialStock(
+        nftId,
+        editionId
+    );
+
+    const nft = nftDatabase.find(
+        (item) => item.id === nftId
+    );
+
+    if (!nft) return 0;
+
+    if (
+        editionId &&
+        !nft.editions?.some(
+            (edition) => edition.id === editionId
+        )
+    ) {
+        return 0;
+    }
+
+    const stock = readStoredStock();
+    const key = getStockKey(nftId, editionId);
+    const stored = stock[key];
+
+    if (
+        typeof stored === "number" &&
+        Number.isInteger(stored) &&
+        stored >= 0 &&
+        stored <= initialStock
+    ) {
+        return stored;
+    }
+
+    return initialStock;
+}
+
+export function getNftWithStock(nft: NFT): NFT {
+    return {
+        ...nft,
+
+        available: getAvailableStock(nft.id),
+
+        editions: nft.editions?.map((edition) => ({
+            ...edition,
+
+            available: getAvailableStock(
+                nft.id,
+                edition.id
+            ),
+        })),
+    };
+}
+
+function aggregateRequested(
+    items: StockItem[]
+): Map<string, StockItem> | null {
+    const requested = new Map<string, StockItem>();
+
+    for (const item of items) {
+        if (!isValidStockItem(item)) {
+            return null;
+        }
+
+        const key = getStockKey(
+            item.nftId,
+            item.editionId
+        );
+
+        const previous = requested.get(key);
+
+        requested.set(key, {
+            nftId: item.nftId,
+            editionId: item.editionId,
+            quantity:
+                (previous?.quantity ?? 0) +
+                item.quantity,
+        });
+    }
+
+    return requested;
+}
+
+function hasEnoughStock(
+    requested: Map<string, StockItem>
+): boolean {
+    for (const item of requested.values()) {
+        if (
+            item.quantity >
+            getAvailableStock(
+                item.nftId,
+                item.editionId
+            )
+        ) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+export function decreaseStock(
+    items: StockItem[]
+): boolean {
+    const requested = aggregateRequested(items);
+
+    if (!requested || requested.size === 0) {
+        return false;
+    }
+
+    if (!hasEnoughStock(requested)) {
+        return false;
     }
 
     const stock = readStoredStock();
 
-    for (const [nftId, quantity] of requested) {
-        stock[nftId] =
-            getAvailableStock(nftId) - quantity;
+    for (const [key, item] of requested) {
+        stock[key] =
+            getAvailableStock(
+                item.nftId,
+                item.editionId
+            ) - item.quantity;
     }
 
     saveStock(stock);
@@ -126,23 +256,9 @@ export function decreaseStock(
     return true;
 }
 
-export type StockCommitResult =
-    | "APPLIED"
-    | "ALREADY_APPLIED"
-    | "INSUFFICIENT";
-
-/**
- * Desconta o estoque uma única vez por pedido.
- *
- * O registro dos pedidos processados é persistido
- * junto com as quantidades, na mesma operação de escrita.
- */
 export function commitOrderStock(
     orderId: string,
-    items: Array<{
-        nftId: string;
-        quantity: number;
-    }>
+    items: StockItem[]
 ): StockCommitResult {
     if (!orderId.trim() || items.length === 0) {
         return "INSUFFICIENT";
@@ -150,62 +266,41 @@ export function commitOrderStock(
 
     const stock = readStoredStock();
 
-    const metadata = stock as unknown as {
-        __processedOrderIds?: unknown;
-    };
+    const storedProcessedIds =
+        stock.__processedOrderIds;
 
     const processedOrderIds: string[] =
-        Array.isArray(metadata.__processedOrderIds)
-            ? metadata.__processedOrderIds.filter(
+        Array.isArray(storedProcessedIds)
+            ? storedProcessedIds.filter(
                 (id): id is string =>
                     typeof id === "string"
             )
             : [];
 
-    // Um pedido já processado nunca desconta novamente.
     if (processedOrderIds.includes(orderId)) {
         return "ALREADY_APPLIED";
     }
 
-    const requested = new Map<string, number>();
+    const requested = aggregateRequested(items);
 
-    for (const item of items) {
-        if (
-            typeof item.nftId !== "string" ||
-            !Number.isInteger(item.quantity) ||
-            item.quantity <= 0
-        ) {
-            return "INSUFFICIENT";
-        }
-
-        requested.set(
-            item.nftId,
-            (requested.get(item.nftId) ?? 0) +
-            item.quantity
-        );
+    if (!requested || requested.size === 0) {
+        return "INSUFFICIENT";
     }
 
-    // Valida todos os itens antes de descontar.
-    for (const [nftId, quantity] of requested) {
-        const nft = nftDatabase.find(
-            (candidate) => candidate.id === nftId
-        );
-
-        if (
-            !nft ||
-            quantity > getAvailableStock(nftId)
-        ) {
-            return "INSUFFICIENT";
-        }
+    if (!hasEnoughStock(requested)) {
+        return "INSUFFICIENT";
     }
 
-    const updatedStock: Record<string, unknown> = {
+    const updatedStock: StockState = {
         ...stock,
     };
 
-    for (const [nftId, quantity] of requested) {
-        updatedStock[nftId] =
-            getAvailableStock(nftId) - quantity;
+    for (const [key, item] of requested) {
+        updatedStock[key] =
+            getAvailableStock(
+                item.nftId,
+                item.editionId
+            ) - item.quantity;
     }
 
     updatedStock.__processedOrderIds = [
@@ -213,10 +308,7 @@ export function commitOrderStock(
         orderId,
     ];
 
-    localStorage.setItem(
-        STOCK_KEY,
-        JSON.stringify(updatedStock)
-    );
+    saveStock(updatedStock);
 
     return "APPLIED";
 }

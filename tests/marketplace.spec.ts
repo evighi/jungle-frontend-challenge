@@ -85,8 +85,8 @@ test("deve abrir os detalhes de um NFT", async ({ page }) => {
     ).toBeVisible();
 
     await expect(
-        page.getByText("0.85 ETH")
-    ).toBeVisible();
+        page.getByTestId("nft-selected-price")
+    ).toHaveText("0.85 ETH");
 });
 
 test("deve tratar um NFT inexistente", async ({ page }) => {
@@ -181,3 +181,37 @@ test("deve adicionar ao carrinho e persistir após refresh", async ({
         })
     ).toBeVisible();
 });
+
+test(
+    "não deve recomendar o próprio NFT ao navegar entre produtos",
+    async ({ page }) => {
+        await page.goto("/nft/1");
+
+        await expect(
+            page.getByRole("heading", {
+                name: "Mais desta coleção",
+            })
+        ).toBeVisible();
+
+        const recommendations = page.getByRole(
+            "region",
+            {
+                name: "Mais desta coleção",
+            }
+        );
+
+        await expect(
+            recommendations.getByText("Emerald Ape")
+        ).toHaveCount(0);
+
+        await page.goto("/nft/2");
+
+        await expect(
+            recommendations.getByText("Sage Nomad")
+        ).toHaveCount(0);
+
+        await expect(
+            recommendations.getByText("Emerald Ape")
+        ).toBeVisible();
+    }
+);

@@ -14,12 +14,14 @@ import { Checkout } from "./pages/Checkout";
 import { Wallets } from "./pages/Wallets";
 import { OrderDetails } from "./pages/OrderDetails";
 import { Profile } from "./pages/Profile";
+import { Footer } from "./components/layout/Footer";
 
 const rootRoute = createRootRoute({
     component: () => (
         <>
             <Header />
             <Outlet />
+            <Footer />
         </>
     ),
     notFoundComponent: () => (

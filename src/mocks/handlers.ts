@@ -7,9 +7,16 @@ import { orderHandlers } from "./orders";
 import { walletHandlers } from "./wallets";
 import { getNftWithStock } from "./stock";
 import { favoriteHandlers } from "./favorites";
+import { applyMockScenario } from "./scenarios";
 
 export const handlers = [
-    http.get("/api/nfts", ({ request }) => {
+    http.get("/api/nfts", async ({ request }) => {
+        const simulatedFailure =
+            await applyMockScenario();
+
+        if (simulatedFailure) {
+            return simulatedFailure;
+        }
         const url = new URL(request.url);
 
         const search = (url.searchParams.get("search") ?? "")
@@ -66,7 +73,13 @@ export const handlers = [
         });
     }),
 
-    http.get("/api/nfts/:id", ({ params }) => {
+    http.get("/api/nfts/:id", async ({ params }) => {
+        const simulatedFailure =
+            await applyMockScenario();
+
+        if (simulatedFailure) {
+            return simulatedFailure;
+        }
         const nft = nftDatabase.find(
             (item) => item.id === params.id
         );

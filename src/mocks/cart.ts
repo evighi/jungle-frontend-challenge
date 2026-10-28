@@ -1,6 +1,8 @@
 import { http, HttpResponse } from "msw";
+
 import { nftDatabase } from "./data/nfts";
 import { resolveRequestIdentity } from "./auth";
+
 import {
     getAvailableStock,
     getNftWithStock,
@@ -9,6 +11,7 @@ import {
 interface StoredCartItem {
     nftId: string;
     quantity: number;
+    editionId?: string;
 }
 
 const GUEST_CART_KEY = "kurio:guest-cart:v1";
@@ -36,6 +39,43 @@ function unauthorizedResponse() {
     );
 }
 
+function getItemKey(
+    nftId: string,
+    editionId?: string
+): string {
+    return JSON.stringify([
+        nftId,
+        editionId ?? null,
+    ]);
+}
+
+function isStoredCartItem(
+    item: unknown
+): item is StoredCartItem {
+    if (
+        typeof item !== "object" ||
+        item === null
+    ) {
+        return false;
+    }
+
+    const candidate = item as Record<string, unknown>;
+
+    return (
+        typeof candidate.nftId === "string" &&
+        typeof candidate.quantity === "number" &&
+        Number.isInteger(candidate.quantity) &&
+        candidate.quantity > 0 &&
+        (
+            candidate.editionId === undefined ||
+            (
+                typeof candidate.editionId === "string" &&
+                candidate.editionId.length > 0
+            )
+        )
+    );
+}
+
 function readCart(storageKey: string): StoredCartItem[] {
     try {
         const stored = localStorage.getItem(storageKey);
@@ -44,17 +84,11 @@ function readCart(storageKey: string): StoredCartItem[] {
 
         const parsed: unknown = JSON.parse(stored);
 
-        if (!Array.isArray(parsed)) return [];
+        if (!Array.isArray(parsed)) {
+            return [];
+        }
 
-        return parsed.filter(
-            (item): item is StoredCartItem =>
-                typeof item === "object" &&
-                item !== null &&
-                typeof item.nftId === "string" &&
-                typeof item.quantity === "number" &&
-                Number.isInteger(item.quantity) &&
-                item.quantity > 0
-        );
+        return parsed.filter(isStoredCartItem);
     } catch {
         return [];
     }
@@ -63,33 +97,102 @@ function readCart(storageKey: string): StoredCartItem[] {
 function saveCart(
     storageKey: string,
     items: StoredCartItem[]
+): void {
+    localStorage.setItem(
+        storageKey,
+        JSON.stringify(items)
+    );
+}
+
+function findNft(nftId: string) {
+    return nftDatabase.find(
+        (item) => item.id === nftId
+    );
+}
+
+function findEdition(
+    nftId: string,
+    editionId?: string
 ) {
-    localStorage.setItem(storageKey, JSON.stringify(items));
+    if (!editionId) return undefined;
+
+    const nft = findNft(nftId);
+
+    return nft?.editions?.find(
+        (edition) => edition.id === editionId
+    );
+}
+
+function isValidEdition(
+    nftId: string,
+    editionId?: string
+): boolean {
+    if (!editionId) {
+        return true;
+    }
+
+    return Boolean(findEdition(nftId, editionId));
 }
 
 function cartResponse(items: StoredCartItem[]) {
     const populatedItems = items.flatMap((item) => {
-        const nft = nftDatabase.find(
-            (candidate) => candidate.id === item.nftId
-        );
+        const nft = findNft(item.nftId);
 
         if (!nft) return [];
 
+        const nftWithStock = getNftWithStock(nft);
+
+        const edition = item.editionId
+            ? nftWithStock.editions?.find(
+                (candidate) =>
+                    candidate.id === item.editionId
+            )
+            : undefined;
+
+        if (item.editionId && !edition) {
+            return [];
+        }
+
         return [
             {
-                nft: getNftWithStock(nft),
+                nft: nftWithStock,
                 quantity: item.quantity,
+
+                ...(item.editionId
+                    ? { editionId: item.editionId }
+                    : {}),
+
+                ...(edition ? { edition } : {}),
             },
         ];
     });
 
     return {
         items: populatedItems,
+
         totalItems: populatedItems.reduce(
-            (total, item) => total + item.quantity,
+            (total, item) =>
+                total + item.quantity,
             0
         ),
     };
+}
+
+function getRequestedEditionId(
+    value: unknown
+): string | undefined | null {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    if (
+        typeof value !== "string" ||
+        value.trim().length === 0
+    ) {
+        return null;
+    }
+
+    return value;
 }
 
 export const cartHandlers = [
@@ -106,7 +209,7 @@ export const cartHandlers = [
         );
     }),
 
-    // ADICIONAR NFT AO CARRINHO
+    // ADICIONAR ITEM
     http.post("/api/cart/items", async ({ request }) => {
         const storageKey = getCartStorageKey(request);
 
@@ -114,16 +217,31 @@ export const cartHandlers = [
             return unauthorizedResponse();
         }
 
-        const body = (await request.json()) as {
+        let body: {
             nftId?: unknown;
             quantity?: unknown;
+            editionId?: unknown;
         };
+
+        try {
+            body = (await request.json()) as typeof body;
+        } catch {
+            return HttpResponse.json(
+                { message: "Dados inválidos." },
+                { status: 400 }
+            );
+        }
+
+        const editionId = getRequestedEditionId(
+            body.editionId
+        );
 
         if (
             typeof body.nftId !== "string" ||
             typeof body.quantity !== "number" ||
             !Number.isInteger(body.quantity) ||
-            body.quantity <= 0
+            body.quantity <= 0 ||
+            editionId === null
         ) {
             return HttpResponse.json(
                 { message: "Dados inválidos." },
@@ -131,9 +249,7 @@ export const cartHandlers = [
             );
         }
 
-        const nft = nftDatabase.find(
-            (item) => item.id === body.nftId
-        );
+        const nft = findNft(body.nftId);
 
         if (!nft) {
             return HttpResponse.json(
@@ -142,18 +258,35 @@ export const cartHandlers = [
             );
         }
 
+        if (!isValidEdition(nft.id, editionId)) {
+            return HttpResponse.json(
+                { message: "Edição não encontrada." },
+                { status: 404 }
+            );
+        }
+
         const cart = readCart(storageKey);
 
         const existing = cart.find(
-            (item) => item.nftId === body.nftId
+            (item) =>
+                getItemKey(item.nftId, item.editionId) ===
+                getItemKey(nft.id, editionId)
         );
 
         const newQuantity =
             (existing?.quantity ?? 0) + body.quantity;
 
-        if (newQuantity > getAvailableStock(nft.id)) {
+        const available = getAvailableStock(
+            nft.id,
+            editionId
+        );
+
+        if (newQuantity > available) {
             return HttpResponse.json(
-                { message: "Quantidade indisponível." },
+                {
+                    message: "Quantidade indisponível.",
+                    availableQuantity: available,
+                },
                 { status: 409 }
             );
         }
@@ -164,12 +297,18 @@ export const cartHandlers = [
             cart.push({
                 nftId: nft.id,
                 quantity: body.quantity,
+
+                ...(editionId
+                    ? { editionId }
+                    : {}),
             });
         }
 
         saveCart(storageKey, cart);
 
-        return HttpResponse.json(cartResponse(cart));
+        return HttpResponse.json(
+            cartResponse(cart)
+        );
     }),
 
     // ATUALIZAR QUANTIDADE
@@ -182,14 +321,29 @@ export const cartHandlers = [
                 return unauthorizedResponse();
             }
 
-            const body = (await request.json()) as {
+            let body: {
                 quantity?: unknown;
+                editionId?: unknown;
             };
+
+            try {
+                body = (await request.json()) as typeof body;
+            } catch {
+                return HttpResponse.json(
+                    { message: "Dados inválidos." },
+                    { status: 400 }
+                );
+            }
+
+            const editionId = getRequestedEditionId(
+                body.editionId
+            );
 
             if (
                 typeof body.quantity !== "number" ||
                 !Number.isInteger(body.quantity) ||
-                body.quantity <= 0
+                body.quantity <= 0 ||
+                editionId === null
             ) {
                 return HttpResponse.json(
                     { message: "Quantidade inválida." },
@@ -197,14 +351,15 @@ export const cartHandlers = [
                 );
             }
 
-            const nft = nftDatabase.find(
-                (item) => item.id === params.nftId
-            );
+            const nftId = String(params.nftId);
+            const nft = findNft(nftId);
 
             const cart = readCart(storageKey);
 
             const existing = cart.find(
-                (item) => item.nftId === params.nftId
+                (item) =>
+                    getItemKey(item.nftId, item.editionId) ===
+                    getItemKey(nftId, editionId)
             );
 
             if (!nft || !existing) {
@@ -214,9 +369,24 @@ export const cartHandlers = [
                 );
             }
 
-            if (body.quantity > getAvailableStock(nft.id)) {
+            if (!isValidEdition(nftId, editionId)) {
                 return HttpResponse.json(
-                    { message: "Estoque insuficiente." },
+                    { message: "Edição não encontrada." },
+                    { status: 404 }
+                );
+            }
+
+            const available = getAvailableStock(
+                nftId,
+                editionId
+            );
+
+            if (body.quantity > available) {
+                return HttpResponse.json(
+                    {
+                        message: "Estoque insuficiente.",
+                        availableQuantity: available,
+                    },
                     { status: 409 }
                 );
             }
@@ -225,11 +395,13 @@ export const cartHandlers = [
 
             saveCart(storageKey, cart);
 
-            return HttpResponse.json(cartResponse(cart));
+            return HttpResponse.json(
+                cartResponse(cart)
+            );
         }
     ),
 
-    // REMOVER NFT DO CARRINHO
+    // REMOVER ITEM
     http.delete(
         "/api/cart/items/:nftId",
         ({ params, request }) => {
@@ -239,10 +411,27 @@ export const cartHandlers = [
                 return unauthorizedResponse();
             }
 
+            const url = new URL(request.url);
+
+            const editionId = getRequestedEditionId(
+                url.searchParams.get("editionId") ?? undefined
+            );
+
+            if (editionId === null) {
+                return HttpResponse.json(
+                    { message: "Edição inválida." },
+                    { status: 400 }
+                );
+            }
+
+            const nftId = String(params.nftId);
+
             const cart = readCart(storageKey);
 
             const existing = cart.find(
-                (item) => item.nftId === params.nftId
+                (item) =>
+                    getItemKey(item.nftId, item.editionId) ===
+                    getItemKey(nftId, editionId)
             );
 
             if (!existing) {
@@ -253,22 +442,28 @@ export const cartHandlers = [
             }
 
             const updated = cart.filter(
-                (item) => item.nftId !== params.nftId
+                (item) =>
+                    getItemKey(item.nftId, item.editionId) !==
+                    getItemKey(nftId, editionId)
             );
 
             saveCart(storageKey, updated);
 
-            return HttpResponse.json(cartResponse(updated));
+            return HttpResponse.json(
+                cartResponse(updated)
+            );
         }
     ),
-    // TRANSFERIR CARRINHO DE VISITANTE PARA USUÁRIO
+
+    // TRANSFERIR CARRINHO VISITANTE
     http.post("/api/cart/merge", ({ request }) => {
         const identity = resolveRequestIdentity(request);
 
         if (identity.type !== "authenticated") {
             return HttpResponse.json(
                 {
-                    message: "Faça login para transferir o carrinho.",
+                    message:
+                        "Faça login para transferir o carrinho.",
                 },
                 { status: 401 }
             );
@@ -279,7 +474,6 @@ export const cartHandlers = [
 
         const guestCart = readCart(GUEST_CART_KEY);
 
-        // Nenhum item para transferir.
         if (guestCart.length === 0) {
             return HttpResponse.json(
                 cartResponse(readCart(userStorageKey))
@@ -288,63 +482,86 @@ export const cartHandlers = [
 
         const userCart = readCart(userStorageKey);
 
-        // Combina quantidades dos dois carrinhos.
-        const mergedQuantities = new Map<string, number>();
+        const mergedQuantities =
+            new Map<string, StoredCartItem>();
 
         for (const item of [...userCart, ...guestCart]) {
-            const currentQuantity =
-                mergedQuantities.get(item.nftId) ?? 0;
-
-            mergedQuantities.set(
+            const key = getItemKey(
                 item.nftId,
-                currentQuantity + item.quantity
+                item.editionId
             );
+
+            const previous = mergedQuantities.get(key);
+
+            mergedQuantities.set(key, {
+                nftId: item.nftId,
+                quantity:
+                    (previous?.quantity ?? 0) +
+                    item.quantity,
+
+                ...(item.editionId
+                    ? { editionId: item.editionId }
+                    : {}),
+            });
         }
 
         const mergedCart: StoredCartItem[] = [];
 
-        // Valida todos os itens antes de salvar qualquer alteração.
-        for (const [nftId, quantity] of mergedQuantities) {
-            const nft = nftDatabase.find(
-                (item) => item.id === nftId
-            );
+        // Valida todos os itens antes de salvar.
+        for (const item of mergedQuantities.values()) {
+            const nft = findNft(item.nftId);
 
             if (!nft) {
                 return HttpResponse.json(
                     {
                         message:
                             "Um dos NFTs do carrinho não está mais disponível.",
-                        nftId,
+                        nftId: item.nftId,
                     },
                     { status: 409 }
                 );
             }
 
-            if (quantity > getAvailableStock(nft.id)) {
+            if (!isValidEdition(item.nftId, item.editionId)) {
+                return HttpResponse.json(
+                    {
+                        message:
+                            "Uma edição do carrinho não está disponível.",
+                        nftId: item.nftId,
+                        editionId: item.editionId,
+                    },
+                    { status: 409 }
+                );
+            }
+
+            const available = getAvailableStock(
+                item.nftId,
+                item.editionId
+            );
+
+            if (item.quantity > available) {
                 return HttpResponse.json(
                     {
                         message:
                             `Estoque insuficiente para ${nft.name}.`,
-                        nftId,
-                        requestedQuantity: quantity,
-                        availableQuantity: getAvailableStock(nft.id),
+                        nftId: item.nftId,
+                        editionId: item.editionId,
+                        requestedQuantity: item.quantity,
+                        availableQuantity: available,
                     },
                     { status: 409 }
                 );
             }
 
-            mergedCart.push({
-                nftId,
-                quantity,
-            });
+            mergedCart.push(item);
         }
 
-        // Salva somente depois que todas as validações passarem.
         saveCart(userStorageKey, mergedCart);
 
-        // Limpa o carrinho visitante após a transferência.
         localStorage.removeItem(GUEST_CART_KEY);
 
-        return HttpResponse.json(cartResponse(mergedCart));
+        return HttpResponse.json(
+            cartResponse(mergedCart)
+        );
     }),
 ];

@@ -1,16 +1,19 @@
 import { http, HttpResponse } from "msw";
+
 import { nftDatabase } from "./data/nfts";
 import { resolveRequestIdentity } from "./auth";
+import { getAvailableStock } from "./stock";
+
 import type {
     BlockchainNetwork,
     QuoteItem,
     QuoteResponse,
 } from "../api/quote";
-import { getAvailableStock } from "./stock";
 
 interface StoredCartItem {
     nftId: string;
     quantity: number;
+    editionId?: string;
 }
 
 interface QuoteRequestBody {
@@ -58,6 +61,33 @@ function weiToEth(value: bigint): string {
         : integer.toString();
 }
 
+function isStoredCartItem(
+    item: unknown
+): item is StoredCartItem {
+    if (
+        typeof item !== "object" ||
+        item === null
+    ) {
+        return false;
+    }
+
+    const value = item as Record<string, unknown>;
+
+    return (
+        typeof value.nftId === "string" &&
+        typeof value.quantity === "number" &&
+        Number.isInteger(value.quantity) &&
+        value.quantity > 0 &&
+        (
+            value.editionId === undefined ||
+            (
+                typeof value.editionId === "string" &&
+                value.editionId.length > 0
+            )
+        )
+    );
+}
+
 function readCart(userId: string): StoredCartItem[] {
     try {
         const stored = localStorage.getItem(
@@ -70,15 +100,7 @@ function readCart(userId: string): StoredCartItem[] {
 
         if (!Array.isArray(parsed)) return [];
 
-        return parsed.filter(
-            (item): item is StoredCartItem =>
-                typeof item === "object" &&
-                item !== null &&
-                typeof item.nftId === "string" &&
-                typeof item.quantity === "number" &&
-                Number.isInteger(item.quantity) &&
-                item.quantity > 0
-        );
+        return parsed.filter(isStoredCartItem);
     } catch {
         return [];
     }
@@ -87,7 +109,7 @@ function readCart(userId: string): StoredCartItem[] {
 function saveQuote(
     userId: string,
     quote: QuoteResponse
-) {
+): void {
     let storedQuotes: StoredQuote[] = [];
 
     try {
@@ -104,7 +126,6 @@ function saveQuote(
         storedQuotes = [];
     }
 
-    // Mantém apenas cotações que ainda não expiraram.
     const validQuotes = storedQuotes.filter(
         (item) =>
             item &&
@@ -124,27 +145,29 @@ function saveQuote(
 }
 
 export const quoteHandlers = [
+    // GERAR COTAÇÃO
     http.post("/api/quote", async ({ request }) => {
-        // 1. Exige autenticação.
         const identity = resolveRequestIdentity(request);
 
         if (identity.type !== "authenticated") {
             return HttpResponse.json(
                 {
-                    message: "Faça login para solicitar uma cotação.",
+                    message:
+                        "Faça login para solicitar uma cotação.",
                 },
                 { status: 401 }
             );
         }
 
-        // 2. Valida os parâmetros.
         let body: QuoteRequestBody;
 
         try {
             body = (await request.json()) as QuoteRequestBody;
         } catch {
             return HttpResponse.json(
-                { message: "Corpo da requisição inválido." },
+                {
+                    message: "Corpo da requisição inválido.",
+                },
                 { status: 400 }
             );
         }
@@ -154,7 +177,9 @@ export const quoteHandlers = [
             body.network !== "polygon"
         ) {
             return HttpResponse.json(
-                { message: "Rede blockchain inválida." },
+                {
+                    message: "Rede blockchain inválida.",
+                },
                 { status: 400 }
             );
         }
@@ -176,7 +201,7 @@ export const quoteHandlers = [
                 ? body.couponCode.trim().toUpperCase()
                 : "";
 
-        // 3. Valida o cupom.
+        // VALIDAÇÃO DO CUPOM
         if (couponCode && couponCode !== "KURIO10") {
             if (couponCode === "OLD10") {
                 return HttpResponse.json(
@@ -191,7 +216,7 @@ export const quoteHandlers = [
             );
         }
 
-        // 4. Busca o carrinho autenticado.
+        // CONSULTA CARRINHO
         const cart = readCart(identity.userId);
 
         if (cart.length === 0) {
@@ -201,41 +226,70 @@ export const quoteHandlers = [
             );
         }
 
-        // 5. Revalida produtos e disponibilidade.
         const items: QuoteItem[] = [];
 
         let subtotalWei = 0n;
 
+        // VALIDA CADA NFT E EDIÇÃO
         for (const cartItem of cart) {
             const nft = nftDatabase.find(
-                (item) => item.id === cartItem.nftId
+                (candidate) =>
+                    candidate.id === cartItem.nftId
             );
 
             if (!nft) {
                 return HttpResponse.json(
                     {
-                        message: "Um NFT do carrinho não foi encontrado.",
+                        message:
+                            "Um NFT do carrinho não foi encontrado.",
                         nftId: cartItem.nftId,
                     },
                     { status: 404 }
                 );
             }
 
-            if (
-                cartItem.quantity >
-                getAvailableStock(nft.id)
-            ) {
+            const edition = cartItem.editionId
+                ? nft.editions?.find(
+                    (candidate) =>
+                        candidate.id === cartItem.editionId
+                )
+                : undefined;
+
+            if (cartItem.editionId && !edition) {
                 return HttpResponse.json(
                     {
-                        message: `Estoque insuficiente para ${nft.name}.`,
+                        message:
+                            "Uma edição do carrinho não foi encontrada.",
                         nftId: nft.id,
-                        availableQuantity: getAvailableStock(nft.id),
+                        editionId: cartItem.editionId,
+                    },
+                    { status: 404 }
+                );
+            }
+
+            const available = getAvailableStock(
+                nft.id,
+                cartItem.editionId
+            );
+
+            if (cartItem.quantity > available) {
+                return HttpResponse.json(
+                    {
+                        message:
+                            `Estoque insuficiente para ${nft.name}.`,
+                        nftId: nft.id,
+                        editionId: cartItem.editionId,
+                        availableQuantity: available,
                     },
                     { status: 409 }
                 );
             }
 
-            const unitPriceWei = ethToWei(nft.priceEth);
+            // Preço da edição, quando selecionada.
+            const unitPriceEth =
+                edition?.priceEth ?? nft.priceEth;
+
+            const unitPriceWei = ethToWei(unitPriceEth);
 
             const totalPriceWei =
                 unitPriceWei * BigInt(cartItem.quantity);
@@ -246,26 +300,34 @@ export const quoteHandlers = [
                 nftId: nft.id,
                 name: nft.name,
                 quantity: cartItem.quantity,
-                unitPriceEth: nft.priceEth,
+                unitPriceEth,
                 totalPriceEth: weiToEth(totalPriceWei),
+
+                ...(edition
+                    ? {
+                        editionId: edition.id,
+                        editionType: edition.type,
+                    }
+                    : {}),
             });
         }
 
-        // 6. Aplica desconto de 10%, se houver cupom.
+        // DESCONTO
         const discountWei =
             couponCode === "KURIO10"
                 ? subtotalWei / 10n
                 : 0n;
 
-        // 7. Calcula taxa e total.
+        // TAXA DE REDE
         const networkFeeWei = NETWORK_FEES[network];
 
         const totalWei =
             subtotalWei - discountWei + networkFeeWei;
 
-        // 8. Gera uma cotação com validade de 5 minutos.
+        // COTAÇÃO COM VALIDADE DE 5 MINUTOS
         const quote: QuoteResponse = {
             quoteId: crypto.randomUUID(),
+
             items,
 
             subtotalEth: weiToEth(subtotalWei),
@@ -281,71 +343,80 @@ export const quoteHandlers = [
             ).toISOString(),
         };
 
-        // 9. Persiste o snapshot para o futuro checkout.
         saveQuote(identity.userId, quote);
 
         return HttpResponse.json(quote);
     }),
 
-    http.get("/api/quote/:quoteId", ({ request, params }) => {
-        const identity = resolveRequestIdentity(request);
+    // CONSULTAR COTAÇÃO
+    http.get(
+        "/api/quote/:quoteId",
+        ({ request, params }) => {
+            const identity = resolveRequestIdentity(request);
 
-        if (identity.type !== "authenticated") {
-            return HttpResponse.json(
-                {
-                    message: "Faça login para consultar a cotação.",
-                },
-                { status: 401 }
-            );
-        }
-
-        let storedQuotes: StoredQuote[] = [];
-
-        try {
-            const stored = localStorage.getItem(QUOTES_KEY);
-
-            if (stored) {
-                const parsed: unknown = JSON.parse(stored);
-
-                if (Array.isArray(parsed)) {
-                    storedQuotes = parsed;
-                }
+            if (identity.type !== "authenticated") {
+                return HttpResponse.json(
+                    {
+                        message:
+                            "Faça login para consultar a cotação.",
+                    },
+                    { status: 401 }
+                );
             }
-        } catch {
-            storedQuotes = [];
-        }
 
-        const storedQuote = storedQuotes.find(
-            (item) =>
-                item.userId === identity.userId &&
-                item.quote?.quoteId === params.quoteId
-        );
+            let storedQuotes: StoredQuote[] = [];
 
-        if (!storedQuote) {
-            return HttpResponse.json(
-                {
-                    message: "Cotação não encontrada.",
-                },
-                { status: 404 }
+            try {
+                const stored = localStorage.getItem(
+                    QUOTES_KEY
+                );
+
+                if (stored) {
+                    const parsed: unknown = JSON.parse(stored);
+
+                    if (Array.isArray(parsed)) {
+                        storedQuotes = parsed;
+                    }
+                }
+            } catch {
+                storedQuotes = [];
+            }
+
+            const storedQuote = storedQuotes.find(
+                (item) =>
+                    item.userId === identity.userId &&
+                    item.quote?.quoteId === params.quoteId
             );
+
+            if (!storedQuote) {
+                return HttpResponse.json(
+                    {
+                        message: "Cotação não encontrada.",
+                    },
+                    { status: 404 }
+                );
+            }
+
+            const quote = storedQuote.quote;
+
+            const expiresAt = new Date(
+                quote.expiresAt
+            ).getTime();
+
+            if (
+                !Number.isFinite(expiresAt) ||
+                expiresAt <= Date.now()
+            ) {
+                return HttpResponse.json(
+                    {
+                        message:
+                            "Esta cotação expirou. Solicite uma nova cotação.",
+                    },
+                    { status: 410 }
+                );
+            }
+
+            return HttpResponse.json(quote);
         }
-
-        const quote = storedQuote.quote;
-        const expiresAt = new Date(quote.expiresAt).getTime();
-
-        if (
-            !Number.isFinite(expiresAt) ||
-            expiresAt <= Date.now()
-        ) {
-            return HttpResponse.json(
-                {
-                    message:
-                        "Esta cotação expirou. Solicite uma nova cotação.",
-                },
-                { status: 410 }
-            );
-        }
-
-        return HttpResponse.json(quote);
-    }),
+    ),
 ];

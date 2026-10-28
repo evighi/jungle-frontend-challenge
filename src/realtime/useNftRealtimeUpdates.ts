@@ -30,6 +30,14 @@ export function useNftRealtimeUpdates() {
             void queryClient.invalidateQueries({
                 queryKey: ["nft"],
             });
+
+            void queryClient.invalidateQueries({
+                queryKey: ["cart"],
+            });
+
+            void queryClient.invalidateQueries({
+                queryKey: ["quote"],
+            });
         }
 
         function handleNftUpdated(
@@ -70,6 +78,15 @@ export function useNftRealtimeUpdates() {
                     "nft",
                     event.nftId,
                 ],
+            });
+            // Atualiza o carrinho e suas cotações quando
+            // um NFT sofre alterações de preço ou estoque.
+            void queryClient.invalidateQueries({
+                queryKey: ["cart"],
+            });
+
+            void queryClient.invalidateQueries({
+                queryKey: ["quote"],
             });
         }
 

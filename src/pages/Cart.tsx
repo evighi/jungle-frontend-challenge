@@ -21,6 +21,8 @@ import {
 
 import { getAuthToken } from "../api/auth";
 
+import { useNftRealtimeUpdates } from "../realtime/useNftRealtimeUpdates";
+
 function getErrorMessage(error: unknown): string {
     if (isAxiosError(error)) {
         return error.response?.data?.message ?? "Erro na operação.";
@@ -57,6 +59,8 @@ function formatWei(value: bigint): string {
 }
 
 export function Cart() {
+    useNftRealtimeUpdates();
+
     const queryClient = useQueryClient();
 
     const [currentTime, setCurrentTime] = useState(0);
@@ -90,7 +94,13 @@ export function Cart() {
 
     const cartFingerprint =
         cart?.items
-            .map(({ nft, quantity }) => `${nft.id}:${quantity}`)
+            .map(({ nft, editionId, quantity }) =>
+                JSON.stringify([
+                    nft.id,
+                    editionId ?? null,
+                    quantity,
+                ])
+            )
             .sort()
             .join("|") ?? "";
 
@@ -131,10 +141,12 @@ export function Cart() {
         mutationFn: ({
             nftId,
             quantity,
+            editionId,
         }: {
             nftId: string;
             quantity: number;
-        }) => updateCartItem(nftId, quantity),
+            editionId?: string;
+        }) => updateCartItem(nftId, quantity, editionId),
 
         onSuccess: () => {
             void queryClient.invalidateQueries({
@@ -144,7 +156,13 @@ export function Cart() {
     });
 
     const removeMutation = useMutation({
-        mutationFn: removeCartItem,
+        mutationFn: ({
+            nftId,
+            editionId,
+        }: {
+            nftId: string;
+            editionId?: string;
+        }) => removeCartItem(nftId, editionId),
 
         onSuccess: () => {
             void queryClient.invalidateQueries({
@@ -160,10 +178,17 @@ export function Cart() {
         updateMutation.error ?? removeMutation.error;
 
     const subtotal = cart?.items.reduce(
-        (total, item) =>
-            total +
-            ethToWei(item.nft.priceEth) *
-            BigInt(item.quantity),
+        (total, item) => {
+            const priceEth =
+                item.edition?.priceEth ??
+                item.nft.priceEth;
+
+            return (
+                total +
+                ethToWei(priceEth) *
+                BigInt(item.quantity)
+            );
+        },
         0n
     ) ?? 0n;
 
@@ -220,37 +245,73 @@ export function Cart() {
                 )}
 
                 {cart && cart.items.length > 0 && (
-                    <div className="grid gap-8 lg:grid-cols-[1fr_340px]">
-                        <section className="space-y-5">
-                            {cart.items.map(({ nft, quantity }) => (
-                                <article
-                                    key={nft.id}
-                                    className="flex flex-col gap-5 rounded-xl border border-[#4a3328] bg-[#261711] p-5 sm:flex-row"
-                                >
-                                    <img
-                                        src={nft.image}
-                                        alt={nft.name}
-                                        className="h-40 w-full rounded-lg object-cover sm:w-40"
-                                    />
+                    <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_360px]">
+                        <section className="min-w-0">
+                            <div className="mb-3 hidden grid-cols-[minmax(0,1fr)_105px_125px_110px_40px] gap-3 border-b border-[#4a3328] pb-3 text-sm font-semibold lg:grid">
+                                <span>NFTs</span>
+                                <span>Preço</span>
+                                <span>Edições</span>
+                                <span>Total</span>
+                                <span className="sr-only">Ações</span>
+                            </div>
 
-                                    <div className="flex flex-1 flex-col justify-between">
-                                        <div>
-                                            <h2 className="text-xl font-bold">
-                                                {nft.name}
-                                            </h2>
+                            <div className="space-y-3">
+                                {cart.items.map(({ nft, quantity, editionId, edition }) => (
+                                    <article
+                                        key={JSON.stringify([
+                                            nft.id,
+                                            editionId ?? null,
+                                        ])}
+                                        className="grid gap-4 rounded-lg bg-[#261711] p-4 lg:grid-cols-[minmax(0,1fr)_105px_125px_110px_40px] lg:items-center lg:gap-3"
+                                    >
+                                        {/* NFT */}
+                                        <div className="flex min-w-0 items-center gap-4">
+                                            <img
+                                                src={nft.image}
+                                                alt={nft.name}
+                                                className="h-20 w-20 shrink-0 rounded-lg object-cover"
+                                            />
 
-                                            <p className="mt-2 text-sm text-[#b09270]">
-                                                {nft.collection}
-                                            </p>
+                                            <div className="min-w-0">
+                                                <h2 className="truncate font-bold text-[#f5e7d8]">
+                                                    {nft.name}
+                                                </h2>
 
-                                            <p className="mt-3 font-bold text-[#d8904c]">
-                                                {nft.priceEth} ETH
-                                            </p>
+                                                <p className="mt-1 truncate text-xs text-[#b09270]">
+                                                    {nft.collection}
+                                                </p>
+
+                                                {edition && (
+                                                    <p className="mt-1 text-xs text-[#d8904c]">
+                                                        Edição:{" "}
+                                                        {edition.type === "OPEN"
+                                                            ? "Aberta"
+                                                            : edition.type}
+                                                    </p>
+                                                )}
+                                            </div>
                                         </div>
 
-                                        <div className="mt-5 flex flex-wrap items-center justify-between gap-4">
-                                            <div className="flex items-center gap-3">
+                                        {/* PREÇO UNITÁRIO */}
+                                        <div className="flex items-center justify-between gap-3 lg:block">
+                                            <span className="text-xs text-[#b09270] lg:hidden">
+                                                Preço
+                                            </span>
+
+                                            <span className="text-sm font-semibold text-[#d8904c]">
+                                                {edition?.priceEth ?? nft.priceEth} ETH
+                                            </span>
+                                        </div>
+
+                                        {/* QUANTIDADE */}
+                                        <div className="flex items-center justify-between gap-3 lg:block">
+                                            <span className="text-xs text-[#b09270] lg:hidden">
+                                                Edições
+                                            </span>
+
+                                            <div className="flex items-center gap-2">
                                                 <Button
+                                                    type="button"
                                                     variant="outline"
                                                     size="icon"
                                                     aria-label={`Diminuir quantidade de ${nft.name}`}
@@ -258,52 +319,79 @@ export function Cart() {
                                                     onClick={() =>
                                                         updateMutation.mutate({
                                                             nftId: nft.id,
+                                                            editionId,
                                                             quantity: quantity - 1,
                                                         })
                                                     }
+                                                    className="h-8 w-8 border-[#d8904c] text-[#d8904c]"
                                                 >
-                                                    <Minus size={16} />
+                                                    <Minus size={14} />
                                                 </Button>
 
-                                                <span className="min-w-6 text-center">
+                                                <output className="min-w-5 text-center text-sm">
                                                     {quantity}
-                                                </span>
+                                                </output>
 
                                                 <Button
+                                                    type="button"
                                                     variant="outline"
                                                     size="icon"
                                                     aria-label={`Aumentar quantidade de ${nft.name}`}
                                                     disabled={
                                                         isUpdating ||
-                                                        quantity >= nft.available
+                                                        quantity >=
+                                                        (edition?.available ?? nft.available)
                                                     }
                                                     onClick={() =>
                                                         updateMutation.mutate({
                                                             nftId: nft.id,
+                                                            editionId,
                                                             quantity: quantity + 1,
                                                         })
                                                     }
+                                                    className="h-8 w-8 border-[#d8904c] text-[#d8904c]"
                                                 >
-                                                    <Plus size={16} />
+                                                    <Plus size={14} />
                                                 </Button>
                                             </div>
-
-                                            <Button
-                                                variant="ghost"
-                                                disabled={isUpdating}
-                                                onClick={() =>
-                                                    removeMutation.mutate(nft.id)
-                                                }
-                                                aria-label={`Remover ${nft.name}`}
-                                                className="text-red-300"
-                                            >
-                                                <Trash2 size={17} />
-                                                Remover
-                                            </Button>
                                         </div>
-                                    </div>
-                                </article>
-                            ))}
+
+                                        {/* TOTAL DO ITEM */}
+                                        <div className="flex items-center justify-between gap-3 lg:block">
+                                            <span className="text-xs text-[#b09270] lg:hidden">
+                                                Total
+                                            </span>
+
+                                            <strong className="text-sm text-[#d8904c]">
+                                                {formatWei(
+                                                    ethToWei(
+                                                        edition?.priceEth ?? nft.priceEth
+                                                    ) * BigInt(quantity)
+                                                )}{" "}
+                                                ETH
+                                            </strong>
+                                        </div>
+
+                                        {/* REMOVER */}
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="icon"
+                                            disabled={isUpdating}
+                                            aria-label={`Remover ${nft.name}`}
+                                            onClick={() =>
+                                                removeMutation.mutate({
+                                                    nftId: nft.id,
+                                                    editionId,
+                                                })
+                                            }
+                                            className="h-9 w-9 text-[#b09270] hover:bg-[#4a3328] hover:text-red-300"
+                                        >
+                                            <Trash2 size={18} />
+                                        </Button>
+                                    </article>
+                                ))}
+                            </div>
                         </section>
 
                         <aside className="h-fit rounded-xl border border-[#4a3328] bg-[#261711] p-6">

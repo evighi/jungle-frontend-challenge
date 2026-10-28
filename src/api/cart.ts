@@ -1,56 +1,80 @@
-import { api, type NFT } from "./nfts";
+import { api, type NFT, type NFTEdition } from "./nfts";
 
 export interface CartItem {
-  nft: NFT;
-  quantity: number;
+    nft: NFT;
+    quantity: number;
+
+    // Ausente nos itens antigos.
+    editionId?: string;
+
+    // Informações da edição selecionada.
+    edition?: NFTEdition;
 }
 
 export interface CartResponse {
-  items: CartItem[];
-  totalItems: number;
+    items: CartItem[];
+    totalItems: number;
 }
 
 export async function getCart(): Promise<CartResponse> {
-  const { data } = await api.get<CartResponse>("/cart");
-  return data;
+    const { data } = await api.get<CartResponse>("/cart");
+
+    return data;
 }
 
 export async function addCartItem(
-  nftId: string,
-  quantity = 1
+    nftId: string,
+    quantity = 1,
+    editionId?: string
 ): Promise<CartResponse> {
-  const { data } = await api.post<CartResponse>("/cart/items", {
-    nftId,
-    quantity,
-  });
+    const { data } = await api.post<CartResponse>(
+        "/cart/items",
+        {
+            nftId,
+            quantity,
+            ...(editionId ? { editionId } : {}),
+        }
+    );
 
-  return data;
+    return data;
 }
 
 export async function updateCartItem(
-  nftId: string,
-  quantity: number
+    nftId: string,
+    quantity: number,
+    editionId?: string
 ): Promise<CartResponse> {
-  const { data } = await api.patch<CartResponse>(
-    `/cart/items/${nftId}`,
-    { quantity }
-  );
+    const { data } = await api.patch<CartResponse>(
+        `/cart/items/${encodeURIComponent(nftId)}`,
+        {
+            quantity,
+            ...(editionId ? { editionId } : {}),
+        }
+    );
 
-  return data;
+    return data;
 }
 
 export async function removeCartItem(
-  nftId: string
+    nftId: string,
+    editionId?: string
 ): Promise<CartResponse> {
-  const { data } = await api.delete<CartResponse>(
-    `/cart/items/${nftId}`
-  );
+    const { data } = await api.delete<CartResponse>(
+        `/cart/items/${encodeURIComponent(nftId)}`,
+        {
+            params: editionId
+                ? { editionId }
+                : undefined,
+        }
+    );
 
-  return data;
+    return data;
 }
 
 export async function mergeGuestCart(): Promise<CartResponse> {
-  const { data } = await api.post<CartResponse>("/cart/merge");
+    const { data } = await api.post<CartResponse>(
+        "/cart/merge"
+    );
 
-  return data;
+    return data;
 }

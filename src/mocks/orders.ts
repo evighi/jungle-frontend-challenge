@@ -28,6 +28,22 @@ const QUOTES_KEY = "kurio:quotes:v1";
 const ORDERS_KEY = "kurio:orders:v1";
 const WALLETS_KEY = "kurio:wallets:v1";
 
+interface StoredCartItem {
+    nftId: string;
+    quantity: number;
+    editionId?: string;
+}
+
+function getCartItemKey(
+    nftId: string,
+    editionId?: string
+): string {
+    return JSON.stringify([
+        nftId,
+        editionId ?? null,
+    ]);
+}
+
 type PaymentOutcome = "CONFIRMED" | "FAILED";
 
 interface StoredOrder extends Order {
@@ -106,6 +122,9 @@ function processPendingOrder(
         order.items.map((item) => ({
             nftId: item.nftId,
             quantity: item.quantity,
+            ...(item.editionId
+                ? { editionId: item.editionId }
+                : {}),
         }))
     );
 
@@ -134,11 +153,10 @@ function processPendingOrder(
 
 function readUserCart(
     userId: string
-): Array<{ nftId: string; quantity: number }> {
-    return readStorage<{
-        nftId: string;
-        quantity: number;
-    }>(`kurio:user-cart:${userId}`);
+): StoredCartItem[] {
+    return readStorage<StoredCartItem>(
+        `kurio:user-cart:${userId}`
+    );
 }
 
 /**
@@ -153,40 +171,48 @@ function reconcilePurchasedCart(
 
     const currentCart = readUserCart(order.userId);
 
-    const purchasedQuantities = new Map<
-        string,
-        number
-    >();
+    const purchasedQuantities = new Map<string, number>();
 
     for (const item of order.items) {
-        purchasedQuantities.set(
+        const key = getCartItemKey(
             item.nftId,
-            (purchasedQuantities.get(item.nftId) ?? 0) +
+            item.editionId
+        );
+
+        purchasedQuantities.set(
+            key,
+            (purchasedQuantities.get(key) ?? 0) +
             item.quantity
         );
     }
 
-    const updatedCart = currentCart.flatMap(
-        (item) => {
-            const purchasedQuantity =
-                purchasedQuantities.get(item.nftId) ??
-                0;
+    const updatedCart = currentCart.flatMap((item) => {
+        const key = getCartItemKey(
+            item.nftId,
+            item.editionId
+        );
 
-            const remainingQuantity =
-                item.quantity - purchasedQuantity;
+        const purchasedQuantity =
+            purchasedQuantities.get(key) ?? 0;
 
-            if (remainingQuantity <= 0) {
-                return [];
-            }
+        const remainingQuantity =
+            item.quantity - purchasedQuantity;
 
-            return [
-                {
-                    nftId: item.nftId,
-                    quantity: remainingQuantity,
-                },
-            ];
+        if (remainingQuantity <= 0) {
+            return [];
         }
-    );
+
+        return [
+            {
+                nftId: item.nftId,
+                quantity: remainingQuantity,
+
+                ...(item.editionId
+                    ? { editionId: item.editionId }
+                    : {}),
+            },
+        ];
+    });
 
     localStorage.setItem(
         storageKey,
@@ -213,17 +239,41 @@ function cartMatchesQuote(
         return false;
     }
 
-    return quote.items.every((item) => {
-        const cartItem = cart.find(
-            (candidate) =>
-                candidate.nftId === item.nftId
+    const cartQuantities = new Map<string, number>();
+
+    for (const item of cart) {
+        const key = getCartItemKey(
+            item.nftId,
+            item.editionId
         );
 
-        return (
-            cartItem !== undefined &&
-            cartItem.quantity === item.quantity
+        if (cartQuantities.has(key)) {
+            return false;
+        }
+
+        cartQuantities.set(key, item.quantity);
+    }
+
+    const quotedKeys = new Set<string>();
+
+    for (const item of quote.items) {
+        const key = getCartItemKey(
+            item.nftId,
+            item.editionId
         );
-    });
+
+        if (quotedKeys.has(key)) {
+            return false;
+        }
+
+        quotedKeys.add(key);
+
+        if (cartQuantities.get(key) !== item.quantity) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 export const orderHandlers = [
@@ -433,18 +483,57 @@ export const orderHandlers = [
         }
 
         // Revalida disponibilidade e preço.
+        // Revalida disponibilidade, edição e preço.
         for (const item of quote.items) {
             const nft = nftDatabase.find(
                 (candidate) =>
                     candidate.id === item.nftId
             );
 
+            if (!nft) {
+                return HttpResponse.json(
+                    {
+                        message:
+                            "Um dos NFTs da cotação não foi encontrado.",
+                    },
+                    { status: 409 }
+                );
+            }
+
+            const edition = item.editionId
+                ? nft.editions?.find(
+                    (candidate) =>
+                        candidate.id === item.editionId
+                )
+                : undefined;
+
+            if (item.editionId && !edition) {
+                return HttpResponse.json(
+                    {
+                        message:
+                            "A edição selecionada não está mais disponível.",
+                    },
+                    { status: 409 }
+                );
+            }
+
+            const available = getAvailableStock(
+                nft.id,
+                item.editionId
+            );
+
+            const currentPrice =
+                edition?.priceEth ?? nft.priceEth;
+
             if (
-                !nft ||
                 !Number.isInteger(item.quantity) ||
                 item.quantity <= 0 ||
-                item.quantity > getAvailableStock(nft.id) ||
-                item.unitPriceEth !== nft.priceEth
+                item.quantity > available ||
+                item.unitPriceEth !== currentPrice ||
+                (
+                    edition !== undefined &&
+                    item.editionType !== edition.type
+                )
             ) {
                 return HttpResponse.json(
                     {
