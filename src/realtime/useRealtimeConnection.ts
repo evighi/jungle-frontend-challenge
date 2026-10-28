@@ -1,7 +1,4 @@
-import {
-    useEffect,
-    useState,
-} from "react";
+import { useSyncExternalStore } from "react";
 
 import { getRealtimeSocket } from "./socket";
 
@@ -10,59 +7,52 @@ export type RealtimeConnectionStatus =
     | "connected"
     | "disconnected";
 
+function getConnectionStatus(): RealtimeConnectionStatus {
+    const socket = getRealtimeSocket();
+
+    if (socket.connected) {
+        return "connected";
+    }
+
+    if (socket.active) {
+        return "connecting";
+    }
+
+    return "disconnected";
+}
+
+function subscribeToConnection(
+    onStoreChange: () => void
+): () => void {
+    const socket = getRealtimeSocket();
+
+    socket.on("connect", onStoreChange);
+    socket.on("disconnect", onStoreChange);
+    socket.on("connect_error", onStoreChange);
+    socket.on("reconnect_attempt", onStoreChange);
+
+    if (!socket.connected && !socket.active) {
+        socket.connect();
+    }
+
+    return () => {
+        socket.off("connect", onStoreChange);
+        socket.off("disconnect", onStoreChange);
+        socket.off("connect_error", onStoreChange);
+        socket.off("reconnect_attempt", onStoreChange);
+    };
+}
+
+function getServerSnapshot(): RealtimeConnectionStatus {
+    return "disconnected";
+}
+
 export function useRealtimeConnection() {
-    const [status, setStatus] =
-        useState<RealtimeConnectionStatus>(
-            "connecting"
-        );
-
-    useEffect(() => {
-        const socket = getRealtimeSocket();
-
-        function handleConnect() {
-            setStatus("connected");
-        }
-
-        function handleDisconnect() {
-            setStatus("disconnected");
-        }
-
-        function handleConnectError() {
-            setStatus("disconnected");
-        }
-
-        socket.on("connect", handleConnect);
-
-        socket.on("disconnect", handleDisconnect);
-
-        socket.on(
-            "connect_error",
-            handleConnectError
-        );
-
-        if (socket.connected) {
-            setStatus("connected");
-        } else {
-            setStatus("connecting");
-            socket.connect();
-        }
-
-        return () => {
-            socket.off("connect", handleConnect);
-
-            socket.off(
-                "disconnect",
-                handleDisconnect
-            );
-
-            socket.off(
-                "connect_error",
-                handleConnectError
-            );
-
-            socket.disconnect();
-        };
-    }, []);
+    const status = useSyncExternalStore(
+        subscribeToConnection,
+        getConnectionStatus,
+        getServerSnapshot
+    );
 
     return {
         status,

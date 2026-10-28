@@ -86,9 +86,7 @@ export function Checkout() {
     const isWalletReady =
         selectedWallet?.connectionStatus === "CONNECTED";
 
-    const [currentTime, setCurrentTime] = useState(
-        Date.now()
-    );
+    const [currentTime, setCurrentTime] = useState(0);
 
     useEffect(() => {
         const interval = window.setInterval(() => {
@@ -102,6 +100,7 @@ export function Checkout() {
 
     const isQuoteExpired =
         quote !== undefined &&
+        currentTime > 0 &&
         currentTime >=
         new Date(quote.expiresAt).getTime();
 

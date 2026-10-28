@@ -6,6 +6,7 @@ import { quoteHandlers } from "./quote";
 import { orderHandlers } from "./orders";
 import { walletHandlers } from "./wallets";
 import { getNftWithStock } from "./stock";
+import { favoriteHandlers } from "./favorites";
 
 export const handlers = [
     http.get("/api/nfts", ({ request }) => {
@@ -87,4 +88,5 @@ export const handlers = [
     ...quoteHandlers,
     ...orderHandlers,
     ...walletHandlers,
+    ...favoriteHandlers,
 ];

@@ -59,7 +59,7 @@ function formatWei(value: bigint): string {
 export function Cart() {
     const queryClient = useQueryClient();
 
-    const [currentTime, setCurrentTime] = useState(Date.now());
+    const [currentTime, setCurrentTime] = useState(0);
 
     useEffect(() => {
         const interval = window.setInterval(() => {
@@ -124,6 +124,7 @@ export function Cart() {
 
     const isQuoteExpired =
         quote !== undefined &&
+        currentTime > 0 &&
         currentTime >= new Date(quote.expiresAt).getTime();
 
     const updateMutation = useMutation({

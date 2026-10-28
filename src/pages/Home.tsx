@@ -11,6 +11,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Skeleton } from "../components/ui/skeleton";
 import { useNftRealtimeUpdates } from "../realtime/useNftRealtimeUpdates";
+import { FavoriteButton } from "../components/FavoriteButton";
 
 
 export function Home() {
@@ -263,8 +264,14 @@ export function Home() {
                                 {data.items.map((nft) => (
                                     <article
                                         key={nft.id}
-                                        className="overflow-hidden rounded-xl border border-[#38241b] bg-[#261711] p-3 transition hover:border-[#d8904c]"
+                                        className="relative overflow-visible rounded-xl border border-[#38241b] bg-[#261711] p-3 transition hover:border-[#d8904c]"
                                     >
+                                        <div className="absolute right-5 top-5 z-10">
+                                            <FavoriteButton
+                                                nftId={nft.id}
+                                                nftName={nft.name}
+                                            />
+                                        </div>
                                         <img
                                             src={nft.image}
                                             alt={`NFT ${nft.name}`}

@@ -11,6 +11,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { addCartItem } from "../api/cart";
 
 import { useNftRealtimeUpdates } from "../realtime/useNftRealtimeUpdates";
+import { FavoriteButton } from "../components/FavoriteButton";
 
 export function NFTDetails() {
     useNftRealtimeUpdates();
@@ -104,9 +105,16 @@ export function NFTDetails() {
                                 {nft.collection}
                             </p>
 
-                            <h1 className="mt-5 text-4xl font-bold">
-                                {nft.name}
-                            </h1>
+                            <div className="mt-5 flex items-center justify-between gap-4">
+                                <h1 className="text-4xl font-bold">
+                                    {nft.name}
+                                </h1>
+
+                                <FavoriteButton
+                                    nftId={nft.id}
+                                    nftName={nft.name}
+                                />
+                            </div>
 
                             <p className="mt-5 text-[#b09270]">
                                 Criado por {nft.creator}

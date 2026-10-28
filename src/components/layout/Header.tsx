@@ -152,13 +152,25 @@ export function Header() {
 
           {user ? (
             <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 text-sm text-[#f1e8e0]">
-                <UserRound size={17} />
+              <Link
+                to="/perfil"
+                aria-label="Acessar meu perfil"
+                className="flex items-center gap-2 text-sm text-[#f1e8e0] hover:text-[#d8904c]"
+              >
+                {user.avatarUrl ? (
+                  <img
+                    src={user.avatarUrl}
+                    alt=""
+                    className="h-7 w-7 rounded-full object-cover"
+                  />
+                ) : (
+                  <UserRound size={17} />
+                )}
 
                 <span className="hidden sm:inline">
                   {user.name}
                 </span>
-              </div>
+              </Link>
 
               <button
                 type="button"

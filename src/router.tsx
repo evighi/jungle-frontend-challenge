@@ -13,6 +13,7 @@ import { Register } from "./pages/Register";
 import { Checkout } from "./pages/Checkout";
 import { Wallets } from "./pages/Wallets";
 import { OrderDetails } from "./pages/OrderDetails";
+import { Profile } from "./pages/Profile";
 
 const rootRoute = createRootRoute({
     component: () => (
@@ -114,6 +115,12 @@ const registerRoute = createRoute({
     component: Register,
 });
 
+const profileRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/perfil",
+    component: Profile,
+});
+
 const orderDetailsRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/pedido/$orderId",
@@ -129,6 +136,7 @@ const routeTree = rootRoute.addChildren([
     registerRoute,
     walletsRoute,
     orderDetailsRoute,
+    profileRoute,
 ]);
 
 export const router = createRouter({

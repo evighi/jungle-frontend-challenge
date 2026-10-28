@@ -4,6 +4,7 @@ interface StoredUser {
     id: string;
     name: string;
     email: string;
+    avatarUrl?: string | null;
     salt: string;
     passwordHash: string;
 }
@@ -101,6 +102,7 @@ function publicUser(user: StoredUser) {
         id: user.id,
         name: user.name,
         email: user.email,
+        avatarUrl: user.avatarUrl ?? null,
     };
 }
 
@@ -188,6 +190,315 @@ export function resolveRequestIdentity(
 }
 
 export const authHandlers = [
+    // =========================================================
+    // PERFIL — CONSULTAR DADOS
+    // =========================================================
+
+    http.get("/api/profile", async ({ request }) => {
+        await initializeUsers();
+
+        const user = findAuthenticatedUser(request);
+
+        if (!user) {
+            return HttpResponse.json(
+                { message: "Sessão inválida ou expirada." },
+                { status: 401 }
+            );
+        }
+
+        return HttpResponse.json(publicUser(user));
+    }),
+
+    // =========================================================
+    // PERFIL — ATUALIZAR DADOS
+    // =========================================================
+
+    http.patch("/api/profile", async ({ request }) => {
+        await initializeUsers();
+
+        const user = findAuthenticatedUser(request);
+
+        if (!user) {
+            return HttpResponse.json(
+                { message: "Sessão inválida ou expirada." },
+                { status: 401 }
+            );
+        }
+
+        let body: unknown;
+
+        try {
+            body = await request.json();
+        } catch {
+            return HttpResponse.json(
+                { message: "Corpo da requisição inválido." },
+                { status: 400 }
+            );
+        }
+
+        if (
+            typeof body !== "object" ||
+            body === null ||
+            Array.isArray(body)
+        ) {
+            return HttpResponse.json(
+                { message: "Dados do perfil inválidos." },
+                { status: 400 }
+            );
+        }
+
+        const input = body as Record<string, unknown>;
+
+        if (
+            typeof input.name !== "string" ||
+            typeof input.email !== "string" ||
+            !(
+                input.avatarUrl === null ||
+                typeof input.avatarUrl === "string"
+            )
+        ) {
+            return HttpResponse.json(
+                { message: "Dados do perfil inválidos." },
+                { status: 400 }
+            );
+        }
+
+        const name = input.name.trim();
+        const email = input.email.trim().toLowerCase();
+
+        const avatarUrl =
+            typeof input.avatarUrl === "string"
+                ? input.avatarUrl.trim()
+                : null;
+
+        if (name.length < 3 || name.length > 100) {
+            return HttpResponse.json(
+                {
+                    message:
+                        "O nome deve ter entre 3 e 100 caracteres.",
+                },
+                { status: 400 }
+            );
+        }
+
+        if (
+            email.length > 254 ||
+            !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+        ) {
+            return HttpResponse.json(
+                { message: "Informe um e-mail válido." },
+                { status: 400 }
+            );
+        }
+
+        if (avatarUrl) {
+            let validAvatar: boolean;
+
+            try {
+                const parsedUrl = new URL(avatarUrl);
+
+                validAvatar =
+                    (
+                        parsedUrl.protocol === "https:" ||
+                        parsedUrl.protocol === "http:"
+                    ) &&
+                    avatarUrl.length <= 2048;
+            } catch {
+                validAvatar = false;
+            }
+
+            if (!validAvatar) {
+                return HttpResponse.json(
+                    {
+                        message:
+                            "Informe uma URL de avatar HTTP ou HTTPS válida.",
+                    },
+                    { status: 400 }
+                );
+            }
+        }
+
+        const users = getUsers();
+
+        const emailInUse = users.some(
+            (storedUser) =>
+                storedUser.id !== user.id &&
+                storedUser.email.toLowerCase() === email
+        );
+
+        if (emailInUse) {
+            return HttpResponse.json(
+                {
+                    message:
+                        "Este e-mail já está cadastrado.",
+                },
+                { status: 409 }
+            );
+        }
+
+        const updatedUser: StoredUser = {
+            ...user,
+            name,
+            email,
+            avatarUrl: avatarUrl || null,
+        };
+
+        saveUsers(
+            users.map((storedUser) =>
+                storedUser.id === user.id
+                    ? updatedUser
+                    : storedUser
+            )
+        );
+
+        return HttpResponse.json(
+            publicUser(updatedUser)
+        );
+    }),
+
+    // =========================================================
+    // PERFIL — ALTERAR SENHA
+    // =========================================================
+
+    http.patch(
+        "/api/profile/password",
+        async ({ request }) => {
+            await initializeUsers();
+
+            const user = findAuthenticatedUser(request);
+
+            if (!user) {
+                return HttpResponse.json(
+                    {
+                        message:
+                            "Sessão inválida ou expirada.",
+                    },
+                    { status: 401 }
+                );
+            }
+
+            let body: unknown;
+
+            try {
+                body = await request.json();
+            } catch {
+                return HttpResponse.json(
+                    {
+                        message:
+                            "Corpo da requisição inválido.",
+                    },
+                    { status: 400 }
+                );
+            }
+
+            if (
+                typeof body !== "object" ||
+                body === null ||
+                Array.isArray(body)
+            ) {
+                return HttpResponse.json(
+                    {
+                        message:
+                            "Dados de alteração de senha inválidos.",
+                    },
+                    { status: 400 }
+                );
+            }
+
+            const input = body as Record<string, unknown>;
+
+            if (
+                typeof input.currentPassword !== "string" ||
+                typeof input.newPassword !== "string"
+            ) {
+                return HttpResponse.json(
+                    {
+                        message:
+                            "Informe a senha atual e a nova senha.",
+                    },
+                    { status: 400 }
+                );
+            }
+
+            const currentPassword = input.currentPassword;
+            const newPassword = input.newPassword;
+
+            if (
+                newPassword.length < 8 ||
+                newPassword.length > 128
+            ) {
+                return HttpResponse.json(
+                    {
+                        message:
+                            "A nova senha deve ter entre 8 e 128 caracteres.",
+                    },
+                    { status: 400 }
+                );
+            }
+
+            const currentHash = await hashPassword(
+                currentPassword,
+                user.salt
+            );
+
+            if (currentHash !== user.passwordHash) {
+                return HttpResponse.json(
+                    {
+                        message:
+                            "A senha atual está incorreta.",
+                    },
+                    { status: 400 }
+                );
+            }
+
+            if (currentPassword === newPassword) {
+                return HttpResponse.json(
+                    {
+                        message:
+                            "A nova senha deve ser diferente da atual.",
+                    },
+                    { status: 400 }
+                );
+            }
+
+            const newSalt = crypto.randomUUID();
+
+            const newPasswordHash = await hashPassword(
+                newPassword,
+                newSalt
+            );
+
+            const users = getUsers();
+
+            saveUsers(
+                users.map((storedUser) =>
+                    storedUser.id === user.id
+                        ? {
+                            ...storedUser,
+                            salt: newSalt,
+                            passwordHash: newPasswordHash,
+                        }
+                        : storedUser
+                )
+            );
+
+            // Preserva a sessão atual e encerra outras
+            // sessões simuladas deste usuário.
+            const currentToken = getToken(request);
+
+            saveSessions(
+                getSessions().filter(
+                    (session) =>
+                        session.userId !== user.id ||
+                        session.token === currentToken
+                )
+            );
+
+            return new HttpResponse(null, {
+                status: 204,
+            });
+        }
+    ),
     http.post("/api/auth/login", async ({ request }) => {
         await initializeUsers();
 
